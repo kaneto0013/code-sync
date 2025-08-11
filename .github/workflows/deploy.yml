@@ -1,0 +1,40 @@
+name: Deploy on push
+
+on:
+  push:
+    branches: [ "main" ]    # mainにpushで自動実行
+  workflow_dispatch:         # 手動実行ボタンも追加
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          printf "Host srv\n  HostName %s\n  User %s\n  IdentityFile ~/.ssh/id_rsa\n  StrictHostKeyChecking no\n" \
+            "${{ secrets.DEPLOY_HOST }}" "${{ secrets.DEPLOY_USER }}" >> ~/.ssh/config
+
+      - name: Rsync files to server
+        run: |
+          rsync -az --delete \
+            --exclude ".git" \
+            --exclude ".github" \
+            --exclude "node_modules" \
+            ./ srv:${{ secrets.DEPLOY_PATH }}/
+
+      - name: Install dependencies (Node)
+        run: |
+          ssh srv 'bash -lc "
+            cd ${{ secrets.DEPLOY_PATH }} && \
+            if [ -f package-lock.json ]; then npm ci; else npm install; end
+          "' || true
+
+      - name: Restart app service
+        run: ssh srv 'sudo systemctl daemon-reload && sudo systemctl restart app'
